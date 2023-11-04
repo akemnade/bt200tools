@@ -1,6 +1,6 @@
-all: setup-bootchoice
+all: setup-bootchoice write-bootmode
 
 clean:
-	rm setup-bootchoice *.o
+	rm -f setup-bootchoice write-bootmode *.o
 
 .PHONY: all clean
