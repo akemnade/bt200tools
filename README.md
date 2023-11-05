@@ -17,4 +17,4 @@ Usage:
 read-gps device [nmea]
 
 Using the nmea keyword enables output of some simple GPRMC
-NMEA records.
+NMEA records generated from the AI2 data.
