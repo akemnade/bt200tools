@@ -8,3 +8,13 @@ after emergency remountly readonly
 ## write-bootmode
 write the bootmode used by the factory u-boot to decide what to do
 
+## read-gps
+reads gps data from /dev/tigps (factory kernel) or /dev/gnssX (from new kernel)
+in the AI2 protocol. Protocol is not fully understood, so just the basics
+are there.
+
+Usage:
+read-gps device [nmea]
+
+Using the nmea keyword enables output of some simple GPRMC
+NMEA records.
