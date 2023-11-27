@@ -95,7 +95,13 @@ static void out_nmealine(double lon, double lat,
   fflush(stdout);
 }
 
-
+static void process_nmea(const uint8_t *data, int len)
+{
+	printf("nmea: %x %x %x %x:" , data[0], data[1], data[2], data[3]);
+	if (len > 4) {
+		fwrite(data + 4, 1, len - 4, stdout);
+	}
+}
 
 static void process_position(const uint8_t *data, int len)
 {
@@ -151,6 +157,9 @@ static void process_packet(uint8_t type, const uint8_t *data, int len)
 		break;
 	case 6: 
 		process_position(data, len);
+		break;
+	case 0xd3:
+		process_nmea(data, len);
 		break;
 	default:
 		decode_info_out("unknown packet type %x len: %d\n", (int)type, len);
