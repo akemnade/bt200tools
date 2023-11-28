@@ -37,17 +37,20 @@ struct __attribute__((__packed__)) position {
 	int16_t altitude;
 };
 
+struct __attribute__((__packed__)) nmea {
+	uint32_t fcount;
+	char nmea[];
+};
+
 static bool nmeaout;
 
 __attribute__((__format__ (__printf__, 1, 2)))
 static void decode_info_out(const char *format, ...)
 {
 	va_list ap;
-	if (nmeaout)
-		return;
 
 	va_start(ap, format);
-	vfprintf(stdout, format, ap);
+	vfprintf(nmeaout ? stderr: stdout, format, ap);
 	va_end(ap);
 }
 
@@ -60,46 +63,12 @@ static void decode_err_out(const char *format, ...)
 	va_end(ap);
 }
 
-static void out_nmealine(double lon, double lat,
-			 double heading, double speed)
-{
-  char timestr[20];
-  char datestr[20];
-  char linebuf[100];
-  time_t t; 
-  struct tm tm;
-  int chksum;
-  int l,i;
-  int lattdeg,longdeg;
-  double lattmin, longmin;
-  t = time(NULL);
-  tm =* gmtime(&t);
-  strftime(datestr, sizeof(datestr),"%d%m%y",&tm);
-  strftime(timestr, sizeof(timestr),"%H%M%S.000", &tm);
-  lattdeg = (int)lat;
-  longdeg = (int)lon;
-  lattmin = lat * 60.0 - lattdeg * 60.0;
-  longmin = lon * 60.0 - longdeg * 60.0;
-  snprintf(linebuf, sizeof(linebuf),"GPRMC,%s,A,%02d%07.4f,%c,%03d%07.4f,%c,%1f,%.1f,%s,,,A",
-           timestr,
-	   lattdeg, lattmin, lattdeg>0?'N':'S',
-	   longdeg, longmin, longdeg>0?'E':'W',
-	   speed / 1.852, heading < 0 ? (heading + 360) : heading,
-	   datestr);
-
-  l = strlen(linebuf);
-  for(i = 0, chksum = 0; i < l;i++) {
-    chksum ^= linebuf[i];
-  }
-  printf("$%s*%02X\r\n", linebuf, chksum & 0xff);
-  fflush(stdout);
-}
-
 static void process_nmea(const uint8_t *data, int len)
 {
-	printf("nmea: %x %x %x %x:" , data[0], data[1], data[2], data[3]);
+	const struct nmea *p = (const struct nmea *) data;
+	decode_info_out("nmea: fcount: %d:", p->fcount);
 	if (len > 4) {
-		fwrite(data + 4, 1, len - 4, stdout);
+		fwrite(p->nmea, 1, len - 4, stdout);
 	}
 }
 
@@ -124,9 +93,6 @@ static void process_position(const uint8_t *data, int len)
 	for(i = 0; i < len; i+= 6)
 		decode_info_out(" %d", data[i]);
 	decode_info_out("\n");
-
-	if (nmeaout)
-		out_nmealine(lon, lat, 0, 0);
 }
 
 static void process_measurement(const uint8_t *data, int len)
@@ -166,7 +132,7 @@ static void process_packet(uint8_t type, const uint8_t *data, int len)
 	}
 }
 
-static void write_init(int fd)
+static void write_init(int fd, bool nmea)
 {
 	uint8_t init1[] = {0x10,0x00,0xf5,0x01,0x00,0x01,0x07,0x01,0x10,0x03};
 	uint8_t init2[] = {0x10,0x01,0xf1,0x01,0x00,0x05,0x08,0x01,0x10,0x03};
@@ -176,19 +142,52 @@ static void write_init(int fd)
 	uint8_t init6[] = {0x10,0x01,0x06,0x0d,0x00,0x01,0x0e,0x00,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x34,0x00,0x10,0x03};
 	uint8_t init7[] = {0x10,0x01,0x02,0x01,0x00,0x03,0x17,0x00,0x10,0x03};
 
+	uint8_t init_nmea[] = {
+		0x10, 0x01, 0x08, 0x18, 0x00, 0x00, 0x01, 0x3c, 0x01, 0x00, 0x01, 0x04,
+		0x83, 0x03, 0x70, 0x17, 0xa0, 0x0f, 0x07, 0x1e, 0x07, 0x1e, 0x01, 0x00,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x06, 0x0d, 0x00, 0x01, 0x00, 0x00, 0x00,
+		0x00, 0xff, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x20, 0x09, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x57, 0x02, 0x00, 0x00, 0x01, 0xe5, 0x04, 0x00,
+		0x3f, 0x00, 0x00, 0x00, 0x02, 0x01, 0x00, 0x03, 0x42, 0x05, 0x10, 0x03
+	};
+
+	uint8_t init_nmea2[] = {
+  0x10, 0x00, 0x22, 0x01, 0x00, 0x01, 0x34, 0x00, 0x10, 0x03, 0x10, 0x00,
+  0x09, 0x00, 0x00, 0x19, 0x00, 0x10, 0x03, 0x10, 0x00, 0x06, 0x0d, 0x00,
+  0x01, 0x20, 0x00, 0x00, 0xc0, 0xff, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+  0x00, 0x05, 0x02, 0x10, 0x03, 0x10, 0x00, 0xfb, 0x16, 0x00, 0x15, 0x00,
+  0x28, 0x00, 0x50, 0x00, 0x50, 0x00, 0x96, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x94, 0x02, 0x10, 0x03
+	};
+
+	uint8_t init_nmea_rep[] = {0x10, 0x00, 0x22, 0x01, 0x00, 0x01, 0x34, 0x00, 0x10, 0x03};
+
 	write(fd, init1, sizeof(init1));
 	usleep(200000);
 	write(fd, init2, sizeof(init2));
 	usleep(200000);
-	write(fd, init3, sizeof(init3));
-	usleep(200000);
-	write(fd, init4, sizeof(init4));
-	usleep(200000);
-	write(fd, init5, sizeof(init5));
-	usleep(200000);
-	write(fd, init6, sizeof(init6));
-	usleep(200000);
-	write(fd, init7, sizeof(init7));
+	if (nmea) {
+		write(fd, init_nmea, sizeof(init_nmea));
+		usleep(200000);
+		write(fd, init_nmea2, sizeof(init_nmea2));
+		usleep(200000);
+#if 0
+        while(1) {
+	  write(fd, init_nmea_rep, sizeof(init_nmea_rep));
+	  usleep(2000000);
+	}
+#endif
+        } else {
+		write(fd, init3, sizeof(init3));
+		usleep(200000);
+		write(fd, init4, sizeof(init4));
+		usleep(200000);
+		write(fd, init5, sizeof(init5));
+		usleep(200000);
+		write(fd, init6, sizeof(init6));
+		usleep(200000);
+		write(fd, init7, sizeof(init7));
+	}
 }
 
 
@@ -311,13 +310,13 @@ int main(int argc, char **argv)
 	FD_SET(fd, &fds);
 	tv.tv_sec = 5;
 	tv.tv_usec = 0;	
-	if (select(fd + 1, &fds, NULL, NULL, &tv) <= 0) {
+	if (1 /* select(fd + 1, &fds, NULL, NULL, &tv) <= 0 */) {
 #ifndef NO_THREADS
 		pthread_t thread;
 		pthread_create(&thread, NULL, read_loop, &fd);
 #endif
 		fprintf(stderr, "no data, trying to init\n");
-		write_init(fd);
+		write_init(fd, nmeaout);
 #ifndef NO_THREADS
 		pthread_join(thread, NULL);
 		return 0;
