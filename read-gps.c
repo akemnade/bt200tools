@@ -232,6 +232,56 @@ static void write_init(int fd, bool nmea)
 	}
 }
 
+static void process_ai2_frame(uint8_t *buf, size_t len)
+{
+	uint16_t sum;
+	uint16_t chk;
+	uint8_t class, type;
+	size_t i;
+	if (len < 4)
+		return;
+
+	chk = buf[len - 1];
+	chk <<= 8;
+
+	chk |= buf[len - 2];
+	len -= 2;
+
+	for(i = 0, sum = 0; i < len; i++)
+		sum += buf[i];
+
+	if (chk != sum) {
+		decode_err_out("checksum mismatch %04x != %04x\n", (int)chk, (int)sum);
+		return;
+	}
+
+	class = buf[1];
+
+	if (class == 2) {
+		decode_info_out("decoded ack\n");
+		return;
+	}
+	buf += 2;
+	len -= 2;
+
+	while(len >= 3) {
+		uint8_t type;
+		uint16_t sublen;
+		type = buf[0];
+		sublen = buf[2];
+		sublen <<= 8;
+		sublen |= buf[1];
+		buf += 3;
+		len -= 3;
+		if (len < sublen) {
+			decode_err_out("packet cut off\n");
+			break;
+		}
+		process_packet(type, buf, sublen);
+		buf += sublen;
+		len -= sublen;
+	}
+}
 
 static void *read_loop(void *fdp)
 {
@@ -244,10 +294,9 @@ static void *read_loop(void *fdp)
 	bool decoding_ack;
 	bool escaping;
 	uint16_t sum;
-	int pktlen;
+	size_t pktlen;
 	f = fdopen(fd, "r+");
 	bufpos = 0;
-	sum = 0;
 	pktlen = 0;
 	while((c = fgetc(f)) != EOF) {
 		totalbufpos++;
@@ -257,79 +306,34 @@ static void *read_loop(void *fdp)
 				decode_err_out("d");
 				continue;
 			}
-			sum = 0;	
-			decoding_ack = false;
 			decode_err_out("\n");
 		}
-		
+
 		if (bufpos == 1) {
 			if (c == 3) {
 				decode_err_out("%04x unexpected end of packet\n", totalbufpos);
 				bufpos = 0;
 				continue;
-			} else if (c == 2) {
-				/* e.g. 100212001003 */
-				decode_info_out("decoding ack\n");	
-				decoding_ack = true;
 			}
 		}
-		
+
 		if ((!escaping) && (c == 0x10) && (bufpos != 0)) {
 			escaping = true;
 			continue;
 		}
 
-		/* 0x10 needs to be unescaped */
-		if (c == 0x10) {
-			decode_err_out("unescaping 0x10\n");
-		}
-
-		gpsbuf[bufpos] = c;
-		bufpos++;
-		if (bufpos <= 5 + pktlen) {
-			sum += c;
-		}
-		if (bufpos == sizeof(gpsbuf)) {
+		if (escaping && (c == 3)) {
+			process_ai2_frame(gpsbuf, bufpos);
 			bufpos = 0;
-			sum = 0;
-			decode_err_out("overlong packet, throwing away\n");
-		}
-		if (bufpos == 5) {
-			pktlen = gpsbuf[4];
-			pktlen <<=8;
-			pktlen |= gpsbuf[3];
-		}
-		
-		if ((bufpos == 5) && (decoding_ack)) {
-			bufpos = 0;
-			sum = 0;
-			decode_info_out("decoded ack\n");
-			decoding_ack = false;
 			continue;
 		}
-
-		if (bufpos == 5 + pktlen + 2) {
-			uint16_t chk = gpsbuf[5 + pktlen + 1];
-			chk <<= 8;
-			chk |= gpsbuf[5 + pktlen];
-			if (chk != sum)
-				decode_err_out("%04x checksum mismatch %04x != %04x\n", totalbufpos, (int)chk, (int)sum);
-
-			sum = 0;
-
-		}
-		if (bufpos == 5 + pktlen + 2 + 1) {
-			bufpos = 0;
-
-			if ((!escaping) || (gpsbuf[5 + pktlen + 2] != 0x03)) {
-				decode_err_out("%04x no terminator\n", totalbufpos);
-			} /* else */ {
-				decode_info_out("%04x report %0x received\n", totalbufpos, gpsbuf[2]);
-				process_packet(gpsbuf[2], gpsbuf + 5, pktlen);
-			}
-			sum = 0;
-		}
 		escaping = false;
+		if (bufpos == sizeof(gpsbuf)) {
+			bufpos = 0;
+			decode_err_out("overlong packet, throwing away\n");
+		}
+		gpsbuf[bufpos] = c;
+		bufpos++;
 	}
 	return NULL;
 }
@@ -356,7 +360,7 @@ int main(int argc, char **argv)
 	FD_ZERO(&fds);
 	FD_SET(fd, &fds);
 	tv.tv_sec = 5;
-	tv.tv_usec = 0;	
+	tv.tv_usec = 0;
 	if (1 /* select(fd + 1, &fds, NULL, NULL, &tv) <= 0 */) {
 #ifndef NO_THREADS
 		pthread_t thread;
