@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <sys/select.h>
 #include <time.h>
 #ifndef NO_THREADS
@@ -19,6 +20,7 @@
 #endif
 
 /* we assume machine order = network order = le for simplity here */
+#define AI2_MEASUREMENT 8
 struct __attribute__((__packed__)) measurement_sv {
 	uint32_t fcount; /* probably ms since start of report */
 	struct __attribute__((__packed__)) {
@@ -29,17 +31,37 @@ struct __attribute__((__packed__)) measurement_sv {
 	} svdata[];
 };
 
+#define AI2_POSITION 6
 struct __attribute__((__packed__)) position {
 	uint32_t fcount; /* probably ms since start of report */
 	uint16_t unknown1;
 	int32_t lat;
 	int32_t lon;
 	int16_t altitude;
+	uint8_t unknown2[15];
+	struct __attribute__((__packed__)) {
+		uint8_t sv;
+		uint8_t unknown[5];
+	} svdata[];
 };
 
+#define AI2_NMEA 0xd3
 struct __attribute__((__packed__)) nmea {
 	uint32_t fcount;
 	char nmea[];
+};
+
+#define AI2_POSITION_EXT 0xd5
+struct __attribute__((__packed__)) position_ext {
+	uint32_t fcount; /* probably ms since start of report */
+	uint16_t unknown1;
+	int32_t lat;
+	int32_t lon;
+	uint8_t unknown[47];
+	struct __attribute__((__packed__)) {
+		uint8_t sv;
+		uint8_t unknown[5];
+	} svdata[];
 };
 
 static bool nmeaout;
@@ -72,6 +94,25 @@ static void process_nmea(const uint8_t *data, int len)
 	}
 }
 
+static void process_position_ext(const uint8_t *data, int len)
+{
+	const struct position_ext *p = (const struct position_ext *) data;
+	int i;
+	if (len < sizeof(struct position_ext))
+	       return;
+
+	double lat = 90 *(double)p->lat / 2147483648.0;
+	double lon = 180 *(double)p->lon / 2147483648.0;
+	decode_info_out("position: fcount: %d, lat: %f lon: %f",
+			p->fcount, lat, lon);
+	len -= offsetof(struct position_ext, svdata);
+	len /= sizeof(p->svdata[0]);
+	decode_info_out(" sv:");
+	for(i = 0; i < len; i++)
+		decode_info_out(" %d", p->svdata[i].sv);
+	decode_info_out("\n");
+}
+
 static void process_position(const uint8_t *data, int len)
 {
 	const struct position *p = (const struct position *) data;
@@ -84,14 +125,11 @@ static void process_position(const uint8_t *data, int len)
 	decode_info_out("position: fcount: %d, lat: %f lon: %f altitude: %.1f",
 			p->fcount, lat, lon,
 			(double)p->altitude / 2.0);
-	data += sizeof(struct position);
-	len -= sizeof(struct position);
-	data += 15;
-	len -= 15;
-	len -= 13; /* unknown data at the end */
-	decode_info_out("sv:");
-	for(i = 0; i < len; i+= 6)
-		decode_info_out(" %d", data[i]);
+	len -= offsetof(struct position, svdata);
+	len /= sizeof(p->svdata[0]);
+	decode_info_out(" sv:");
+	for(i = 0; i < len; i++)
+		decode_info_out(" %d", p->svdata[i].sv);
 	decode_info_out("\n");
 }
 
@@ -118,14 +156,17 @@ static void process_packet(uint8_t type, const uint8_t *data, int len)
 {
 	decode_info_out("packet type %x, payload: %d\n", type, len);
 	switch(type) {
-	case 8:
+	case AI2_MEASUREMENT:
 		process_measurement(data, len);
 		break;
-	case 6: 
+	case AI2_POSITION:
 		process_position(data, len);
 		break;
-	case 0xd3:
+	case AI2_NMEA:
 		process_nmea(data, len);
+		break;
+	case AI2_POSITION_EXT:
+		process_position_ext(data, len);
 		break;
 	default:
 		decode_info_out("unknown packet type %x len: %d\n", (int)type, len);
