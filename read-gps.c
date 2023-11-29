@@ -64,6 +64,8 @@ struct __attribute__((__packed__)) position_ext {
 	} svdata[];
 };
 
+#define AI2_ERROR 0xf5
+
 static bool nmeaout;
 
 __attribute__((__format__ (__printf__, 1, 2)))
@@ -167,6 +169,12 @@ static void process_packet(uint8_t type, const uint8_t *data, int len)
 		break;
 	case AI2_POSITION_EXT:
 		process_position_ext(data, len);
+		break;
+	case AI2_ERROR:
+		if (len == 2)
+			decode_info_out("got error code %02x %02x\n ", data[0], data[1]);
+		else
+			decode_info_out("got error with len %d\n", len);
 		break;
 	default:
 		decode_info_out("unknown packet type %x len: %d\n", (int)type, len);
