@@ -200,6 +200,7 @@ static void *read_loop(void *fdp)
 	int totalbufpos = 0;
 	int bufpos;
 	bool decoding_ack;
+	bool escaping;
 	uint16_t sum;
 	int pktlen;
 	f = fdopen(fd, "r+");
@@ -209,6 +210,7 @@ static void *read_loop(void *fdp)
 	while((c = fgetc(f)) != EOF) {
 		totalbufpos++;
 		if (bufpos == 0) {
+			escaping = false;
 			if (c != 0x10) {
 				decode_err_out("d");
 				continue;
@@ -230,12 +232,14 @@ static void *read_loop(void *fdp)
 			}
 		}
 		
-		/* 0x10 needs to be unescaped */
-		if ((c == 0x10) &&
-		    (bufpos > 0) &&
-		    (gpsbuf[bufpos-1] == 0x10)) {
-			decode_err_out("unescaping 0x10\n");
+		if ((!escaping) && (c == 0x10) && (bufpos != 0)) {
+			escaping = true;
 			continue;
+		}
+
+		/* 0x10 needs to be unescaped */
+		if (c == 0x10) {
+			decode_err_out("unescaping 0x10\n");
 		}
 
 		gpsbuf[bufpos] = c;
@@ -254,7 +258,7 @@ static void *read_loop(void *fdp)
 			pktlen |= gpsbuf[3];
 		}
 		
-		if ((bufpos == 6) && (decoding_ack)) {
+		if ((bufpos == 5) && (decoding_ack)) {
 			bufpos = 0;
 			sum = 0;
 			decode_info_out("decoded ack\n");
@@ -272,10 +276,10 @@ static void *read_loop(void *fdp)
 			sum = 0;
 
 		}
-		if (bufpos == 5 + pktlen + 2 + 2) {
+		if (bufpos == 5 + pktlen + 2 + 1) {
 			bufpos = 0;
 
-			if ((gpsbuf[5 + pktlen + 2] != 0x10) || (gpsbuf[5 + pktlen + 2 + 1] != 0x03)) {
+			if ((!escaping) || (gpsbuf[5 + pktlen + 2] != 0x03)) {
 				decode_err_out("%04x no terminator\n", totalbufpos);
 			} /* else */ {
 				decode_info_out("%04x report %0x received\n", totalbufpos, gpsbuf[2]);
@@ -283,6 +287,7 @@ static void *read_loop(void *fdp)
 			}
 			sum = 0;
 		}
+		escaping = false;
 	}
 	return NULL;
 }
