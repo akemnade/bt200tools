@@ -67,6 +67,8 @@ struct __attribute__((__packed__)) position_ext {
 #define AI2_ERROR 0xf5
 
 static bool nmeaout;
+static bool noinit;
+static bool noprocess;
 
 __attribute__((__format__ (__printf__, 1, 2)))
 static void decode_info_out(const char *format, ...)
@@ -154,8 +156,24 @@ static void process_measurement(const uint8_t *data, int len)
 	}
 }
 
-static void process_packet(uint8_t type, const uint8_t *data, int len)
+static void process_packet(uint8_t class, uint8_t type, const uint8_t *data, int len)
 {
+	if (noprocess) {
+		int i;
+		decode_info_out("0x%02x, 0x%02x, {", class, type);
+		for(i = 0; i < len; i++)
+			decode_info_out("0x%02x, ", data[i]);
+
+		decode_info_out("}\n");
+
+		decode_info_out("%02x, %02x, ", class, type);
+		for(i = 0; i < len; i++)
+			decode_info_out("%02x", data[i]);
+
+		decode_info_out("\n");
+		return;
+	}
+
 	decode_info_out("packet type %x, payload: %d\n", type, len);
 	switch(type) {
 	case AI2_MEASUREMENT:
@@ -285,7 +303,7 @@ static void process_ai2_frame(uint8_t *buf, size_t len)
 			decode_err_out("packet cut off\n");
 			break;
 		}
-		process_packet(type, buf, sublen);
+		process_packet(class, type, buf, sublen);
 		buf += sublen;
 		len -= sublen;
 	}
@@ -355,8 +373,19 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Usage: %s gnssdev [nmea]\n", argv[0]);
 		return 1;
 	}
-	if ((argc > 2) && (!strcmp(argv[2], "nmea")))
-		nmeaout = true;
+
+	if (argc > 2) {
+		if (!strcmp(argv[2], "nmea"))
+			nmeaout = true;
+
+		if (!strcmp(argv[2], "noinit"))
+			noinit = true;
+
+		if (!strcmp(argv[2], "noprocess")) {
+			noinit = true;
+			noprocess = true;
+		}
+	}
 
         fd = open(argv[1], O_RDWR);
 	if (fd < 0) {
@@ -364,22 +393,17 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	fprintf(stderr, "Device opened, waiting 5s for input\n");
-	FD_ZERO(&fds);
-	FD_SET(fd, &fds);
-	tv.tv_sec = 5;
-	tv.tv_usec = 0;
-	if (1 /* select(fd + 1, &fds, NULL, NULL, &tv) <= 0 */) {
 #ifndef NO_THREADS
-		pthread_t thread;
-		pthread_create(&thread, NULL, read_loop, &fd);
+	pthread_t thread;
+	pthread_create(&thread, NULL, read_loop, &fd);
 #endif
-		fprintf(stderr, "no data, trying to init\n");
+	if (!noinit)
 		write_init(fd, nmeaout);
 #ifndef NO_THREADS
-		pthread_join(thread, NULL);
-		return 0;
-#endif
-	}
+	pthread_join(thread, NULL);
+	return 0;
+#else
 	read_loop(&fd);
+	return 0;
+#endif
 }
