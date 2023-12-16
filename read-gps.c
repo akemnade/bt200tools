@@ -426,6 +426,8 @@ int main(int argc, char **argv)
 	int fd;
 	struct timeval tv;
 	fd_set fds;
+	bool send_off = false;
+	bool send_idle = false;
 	if ((argc < 2) || !strcmp(argv[1], "--help")) {
 		fprintf(stderr, "Usage: %s gnssdev [nmea]\n", argv[0]);
 		return 1;
@@ -442,6 +444,17 @@ int main(int argc, char **argv)
 			noinit = true;
 			noprocess = true;
 		}
+
+		if (!strcmp(argv[2], "off")) {
+			noinit = true;
+			send_idle = true;
+			send_off = true;
+		}
+
+		if (!strcmp(argv[2], "idle")) {
+			noinit = true;
+			send_idle = true;
+		}
 	}
 
         fd = open(argv[1], O_RDWR);
@@ -456,6 +469,13 @@ int main(int argc, char **argv)
 #endif
 	if (!noinit)
 		write_init(fd, nmeaout);
+
+	if (send_idle)
+		WRITE_PKT(fd, 1, 2, {2});
+
+	if (send_off)
+		WRITE_PKT(fd, 1, 2, {1});
+
 #ifndef NO_THREADS
 	pthread_join(thread, NULL);
 	return 0;
