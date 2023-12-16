@@ -194,9 +194,18 @@ static void process_packet(uint8_t class, uint8_t type, const uint8_t *data, int
 		process_position_ext(data, len);
 		break;
 	case AI2_ERROR:
-		if (len == 2)
-			decode_info_out("got error code %02x %02x\n ", data[0], data[1]);
-		else
+		if (len == 2) {
+			uint16_t err = data[1];
+			err <<= 8;
+			err |= data[0];
+			switch(err) {
+				case 0x02ff:
+					decode_info_out("error invalid checksum\n ", err);
+					break;
+				default:
+					decode_info_out("got error code %04x\n ", err);
+			}
+		} else
 			decode_info_out("got error with len %d\n", len);
 		break;
 	default:
