@@ -64,6 +64,10 @@ struct __attribute__((__packed__)) position_ext {
 	} svdata[];
 };
 
+#define AI2_ASYNC_EVENT 0x80
+#define AI2_ASYNC_EVENT_ENG_IDLE 0x07
+#define AI2_ASYNC_EVENT_ENG_OFF 0x01
+
 #define AI2_ERROR 0xf5
 
 static bool nmeaout;
@@ -156,6 +160,21 @@ static void process_measurement(const uint8_t *data, int len)
 	}
 }
 
+static void process_async_event(const uint8_t *data, int len)
+{
+	switch(data[0]) {
+		case AI2_ASYNC_EVENT_ENG_IDLE:
+			decode_info_out("Event: machine idle\n");
+			break;
+		case AI2_ASYNC_EVENT_ENG_OFF:
+			decode_info_out("Event: machine off\n");
+			break;
+		default:
+			decode_info_out("Event: unknown (%02x)\n", data[0]);
+
+	}
+}
+
 static void dump_packet(uint8_t class, uint8_t type, const uint8_t *data, int len)
 {
 	int i;
@@ -192,6 +211,9 @@ static void process_packet(uint8_t class, uint8_t type, const uint8_t *data, int
 		break;
 	case AI2_POSITION_EXT:
 		process_position_ext(data, len);
+		break;
+	case AI2_ASYNC_EVENT:
+		process_async_event(data, len);
 		break;
 	case AI2_ERROR:
 		if (len == 2) {
