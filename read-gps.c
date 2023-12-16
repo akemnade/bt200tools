@@ -156,21 +156,26 @@ static void process_measurement(const uint8_t *data, int len)
 	}
 }
 
+static void dump_packet(uint8_t class, uint8_t type, const uint8_t *data, int len)
+{
+	int i;
+	decode_info_out("0x%02x, 0x%02x, {", class, type);
+	for(i = 0; i < len; i++)
+		decode_info_out("0x%02x, ", data[i]);
+
+	decode_info_out("}\n");
+
+	decode_info_out("%02x, %02x, ", class, type);
+	for(i = 0; i < len; i++)
+		decode_info_out("%02x", data[i]);
+
+	decode_info_out("\n");
+}
+
 static void process_packet(uint8_t class, uint8_t type, const uint8_t *data, int len)
 {
 	if (noprocess) {
-		int i;
-		decode_info_out("0x%02x, 0x%02x, {", class, type);
-		for(i = 0; i < len; i++)
-			decode_info_out("0x%02x, ", data[i]);
-
-		decode_info_out("}\n");
-
-		decode_info_out("%02x, %02x, ", class, type);
-		for(i = 0; i < len; i++)
-			decode_info_out("%02x", data[i]);
-
-		decode_info_out("\n");
+		dump_packet(class, type, data, len);
 		return;
 	}
 
