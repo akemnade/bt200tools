@@ -204,6 +204,58 @@ static void process_packet(uint8_t class, uint8_t type, const uint8_t *data, int
 	}
 }
 
+static int append_packet(uint8_t *pkt, int pktpos, uint8_t data)
+{
+	pkt[pktpos] = data;
+	pktpos++;
+	if (data == 0x10) {
+		pkt[pktpos] = data;
+		pktpos++;
+	}
+	return pktpos;
+}
+
+static int write_packet(int fd, uint8_t class, uint8_t cmd, uint8_t *data, uint16_t len)
+{
+	uint8_t *pkt = calloc(1, 4 + len * 2  + 2);
+	int i;
+	int ret;
+	uint16_t sum;
+	int pktpos = 2;
+	pkt[0] = 0x10;
+	pkt[1] = class;
+
+	sum = 0x10 + class + cmd;
+	sum += len & 0xff;
+	sum += len >> 8;
+
+	pktpos = append_packet(pkt, pktpos, cmd);
+	pktpos = append_packet(pkt, pktpos, len & 0xff);
+	pktpos = append_packet(pkt, pktpos, len >> 8);
+
+	for (i = 0; i < len; i++) {
+		pktpos = append_packet(pkt, pktpos, data[i]);
+		sum += data[i];
+	}
+
+	pkt[pktpos] = sum & 0xff;
+	pktpos++;
+
+	pkt[pktpos] = sum >> 8;
+	pktpos++;
+
+	pkt[pktpos] = 0x10;
+	pktpos++;
+	pkt[pktpos] = 0x03;
+	pktpos++;
+
+	ret = write(fd, pkt, pktpos);
+
+	free(pkt);
+	return ret;
+}
+#define WRITE_PKT(fd, class, type, data) do { uint8_t d[] = data; write_packet(fd, (class), (type), d, sizeof(d)); } while(0)
+
 static void write_init(int fd, bool nmea)
 {
 	uint8_t init1[] = {0x10,0x00,0xf5,0x01,0x00,0x01,0x07,0x01,0x10,0x03};
