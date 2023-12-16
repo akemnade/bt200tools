@@ -492,11 +492,18 @@ int main(int argc, char **argv)
 	if (!noinit)
 		write_init(fd, nmeaout);
 
-	if (send_idle)
+	if (send_idle) {
 		WRITE_PKT(fd, 1, 2, {2});
+		/* we need to wait for idle state */
+		usleep(500000);
+	}
 
-	if (send_off)
+	/* this keeps satellite data, rmmod does not! */
+	if (send_off) {
 		WRITE_PKT(fd, 1, 2, {1});
+		usleep(500000);
+		return 0;
+	}
 
 #ifndef NO_THREADS
 	pthread_join(thread, NULL);
