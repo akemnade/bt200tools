@@ -291,10 +291,36 @@ static int write_packet(int fd, uint8_t class, uint8_t cmd, uint8_t *data, uint1
 	free(pkt);
 	return ret;
 }
+
+#define RECEIVER_STATE_OFF 1
+#define RECEIVER_STATE_IDLE 2
+#define RECEIVER_STATE_ON 3
+static int set_receiver_state(int fd, uint8_t state)
+{
+	return write_packet(fd, 1, 2, &state, 1);
+}
+
+#define NMEA_MASK_GGA (1 << 0)
+#define NMEA_MASK_GLL (1 << 1)
+#define NMEA_MASK_GSA (1 << 2)
+#define NMEA_MASK_GSV (1 << 3)
+#define NMEA_MASK_RMC (1 << 4)
+#define NMEA_MASK_VTG (1 << 5)
+
+#define NMEA_MASK_ALL (NMEA_MASK_GGA | NMEA_MASK_GLL | NMEA_MASK_GSA | NMEA_MASK_GSV | NMEA_MASK_RMC | NMEA_MASK_VTG)
+
+static int enable_nmea_reports(int fd, uint8_t mask)
+{
+	uint8_t buf[4] = {0};
+	buf[0] = mask;
+	return write_packet(fd, 1, 0xe5, buf, sizeof(buf));
+}
+
 #define WRITE_PKT(fd, class, type, data) do { uint8_t d[] = data; write_packet(fd, (class), (type), d, sizeof(d)); } while(0)
 
 static void write_init(int fd, bool nmea)
 {
+#if 0
 	uint8_t init_nmea[] = {
 		0x10, 0x01, 0x08, 0x18, 0x00, 0x00, 0x01, 0x3c, 0x01, 0x00, 0x01, 0x04,
 		0x83, 0x03, 0x70, 0x17, 0xa0, 0x0f, 0x07, 0x1e, 0x07, 0x1e, 0x01, 0x00,
@@ -311,18 +337,19 @@ static void write_init(int fd, bool nmea)
   0x10, 0x00, 0x06, 0x0d, 0x00, 0x01, 0x20, 0x00, 0x00, 0xc0, 0xff, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x05, 0x02, 0x10, 0x03,
   0x10, 0x00, 0xfb, 0x16, 0x00, 0x15, 0x00, 0x28, 0x00, 0x50, 0x00, 0x50, 0x00, 0x96, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x94, 0x02, 0x10, 0x03
 	};
+#endif
 
 	WRITE_PKT(fd, 0x00,0xf5, {0x01});
 	usleep(200000);
 	WRITE_PKT(fd, 0x01,0xf1, {0x05});
 	usleep(200000);
+
+	set_receiver_state(fd, RECEIVER_STATE_IDLE);
+	usleep(200000);
 	if (nmea) {
-#if 1
-		write(fd, init_nmea, sizeof(init_nmea));
+		enable_nmea_reports(fd, NMEA_MASK_ALL);
 		usleep(200000);
-#endif
-		WRITE_PKT(fd, 0, 0x22, {0x01});
-		usleep(200000);
+		set_receiver_state(fd, RECEIVER_STATE_ON);
 #if 0
         while(1) {
 	  write(fd, init_nmea_rep, sizeof(init_nmea_rep));
@@ -332,14 +359,14 @@ static void write_init(int fd, bool nmea)
         } else {
 		WRITE_PKT(fd, 0x01, 0xf0, {});
 		usleep(200000);
-		WRITE_PKT(fd, 0x01, 0x02, {0x02}); // C_RECEIVER_IDLE
+		set_receiver_state(fd, RECEIVER_STATE_IDLE);
 		usleep(200000);
 		WRITE_PKT(fd, 0x01, 0xed, {0x00});
 		usleep(200000);
 		uint8_t pk[] = {0x01,0x0e,0x00,0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x00,0x00,0x00};
 		write_packet(fd, 0x01, 0x06, pk, sizeof(pk));
 		usleep(200000);
-		WRITE_PKT(fd, 0x01, 0x02, {0x03}); // C_RECEIVER_ON
+		set_receiver_state(fd, RECEIVER_STATE_ON);
 	}
 }
 
