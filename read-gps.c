@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <sys/select.h>
 #include <time.h>
+#include <ctype.h>
 #ifndef NO_THREADS
 #include <pthread.h>
 #endif
@@ -193,6 +194,7 @@ static void dump_packet(uint8_t class, uint8_t type, const uint8_t *data, int le
 
 static void process_packet(uint8_t class, uint8_t type, const uint8_t *data, int len)
 {
+	int i;
 	if (noprocess) {
 		dump_packet(class, type, data, len);
 		return;
@@ -231,7 +233,11 @@ static void process_packet(uint8_t class, uint8_t type, const uint8_t *data, int
 			decode_info_out("got error with len %d\n", len);
 		break;
 	default:
-		decode_info_out("unknown packet type %x len: %d\n", (int)type, len);
+		decode_info_out("unknown packet type %x len: %d ", (int)type, len);
+		for(i = 0; i < len; i++) {
+			decode_info_out("%02x", data[i]);
+		}
+		decode_info_out("\n");
 	}
 }
 
@@ -400,7 +406,7 @@ static void *read_loop(void *fdp)
 	bool escaping;
 	uint16_t sum;
 	size_t pktlen;
-	f = fdopen(fd, "r+");
+	f = fdopen(fd, "r");
 	bufpos = 0;
 	pktlen = 0;
 	while((c = fgetc(f)) != EOF) {
@@ -443,6 +449,59 @@ static void *read_loop(void *fdp)
 	return NULL;
 }
 
+
+static int hexbuf_to_str(const char *src, uint8_t *dest, int len)
+{
+	char buf[5];
+	int i;
+	int c;
+	bool first = true;
+	int destpos = 0;
+	buf[4] = 0;
+	buf[0] = '0';
+	buf[1] = 'x';
+	for(i=0; i < len; i++) {
+		if (!isxdigit(src[i])) {
+			first = true;
+			continue;
+		}
+		if (first) {
+			buf[2] = src[i];
+			first = false;
+		} else {
+			buf[3] = src[i];
+			first = true;
+			dest[destpos] = strtoul(buf, NULL, 0);
+			destpos++;
+		}
+	}
+	return destpos;
+}
+
+void hex_from_stdin_to(int fd)
+{
+	char buf[1024];
+	while(fgets(buf, sizeof(buf), stdin)) {
+		int l = hexbuf_to_str(buf, buf, strlen(buf));
+		write(fd, buf, l);
+	}
+}
+
+void cmd_from_stdin_to(int fd)
+{
+	char buf[1024];
+	while(fgets(buf, sizeof(buf), stdin)) {
+		unsigned int class, cmd;
+		char *data;
+		if (sscanf(buf, "%x %x %ms", &class, &cmd, &data) == 3) {
+			int l = hexbuf_to_str(data, data, strlen(buf));
+			write_packet(fd, class, cmd, data, l);
+			free(data);
+		}
+	}
+}
+
+
 int main(int argc, char **argv)
 {
 	int fd;
@@ -450,6 +509,7 @@ int main(int argc, char **argv)
 	fd_set fds;
 	bool send_off = false;
 	bool send_idle = false;
+	int pipefds[2] = {-1};
 	if ((argc < 2) || !strcmp(argv[1], "--help")) {
 		fprintf(stderr, "Usage: %s gnssdev [nmea]\n", argv[0]);
 		return 1;
@@ -479,7 +539,13 @@ int main(int argc, char **argv)
 		}
 	}
 
-        fd = open(argv[1], O_RDWR);
+	if (!strcmp(argv[1], "-")) {
+		pipe(pipefds);
+		noinit = true;
+		fd = pipefds[0];
+	} else {
+		fd = open(argv[1], O_RDWR);
+	}
 	if (fd < 0) {
 		fprintf(stderr, "Cannot open %s\n", argv[1]);
 		return 1;
@@ -505,7 +571,16 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
+	if (pipefds[1] > 0) {
+		hex_from_stdin_to(pipefds[1]);
+		close(pipefds[1]);
+	}
 #ifndef NO_THREADS
+	else if (noinit) {
+		cmd_from_stdin_to(fd);
+		return 0;
+	}
+
 	pthread_join(thread, NULL);
 	return 0;
 #else
